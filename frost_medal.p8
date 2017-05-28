@@ -5,20 +5,23 @@ __lua__
 author:bootles
 date: 5/15/2017
 notes:
+	-separate "sprite" data and
+		character instance data?
 	-draw cursor as black with
 		different transparent color?
 	-game window will have fixed
-		size/border, camera will pan
-		to show more as needed
-		(or just limit maps to small
-		sizes?)
+		size/border(done)
+	-camera will pan to show more 
+	 as needed (or just limit maps
+	 to small sizes?)
 	-compute all constants and
 		hard-code them to reduce
-		symbols
+		symbols(title done)
 	-write a general function
 		to draw a dynamically sized
-		menu (logic exists but func
-		does not)
+		menu (logic exists but menu
+		items and count need to be
+		passed/deterrmined at runtime)
 	-make animated sprite function
 		call (can all sprites be on
 		same timer?)
@@ -34,12 +37,17 @@ gamemode=0
 1=move character
 2=action menu
 3=moving character
+4=animating move
 --]]
 turnmode=0
 
 --menu cursor item
 --should be reset after use!
 m_item=0
+
+--character in movement
+--temp variable!
+movechar=nil
 
 --"tile" state
 --[[
@@ -74,7 +82,6 @@ i_w7=0 i_w8=0 i_w9=0
 --unify for all sprites?
 ccurs=0 --in-game and title
 cchar=16 --test for sprite1
-cchar2=18--test for sprite2
 
 --frame counter
 --[[
@@ -84,9 +91,16 @@ sprite2 if f>=15
 --]]
 frames=0
 
+--menu item table
+act_menu={
+	{"units",ucall},
+	{"status",scall},
+	{"help",hcall},
+	{"end",ecall}
+}
+
 --sprite table
-char={x=8,y=8,sp=16,t=0}
---char2={x=8,y=8,sp=18}
+char={x=8,y=8,sp=16,mv=18,t=0}
 curs={x=8,y=8,sp=0}
 tcurs={x=38,y=30,sp=32}--title
 actcurs={x=97,y=1,x2=126,y2=7}
@@ -94,53 +108,32 @@ actcurs={x=97,y=1,x2=126,y2=7}
 --characters fielded
 player={char}
 enemy={}
-all={player,enemy}
+allunits={player,enemy}
 
 --map table
 maps={one={0,0,0,0,10,10}}
 
-function _init()
-	cls()
-	if (gamemode==0) then
-		rect(0,0,127,60,6)
-		print("„frost medal„",
-			34,10,6)
-		print("start",
-			cen_t_h("start",127),
-			30,6)
-		spr(draw_curs(),tcurs.x,
-			tcurs.y)
-	end
-end
 
 function _draw()
 	cls()
 	---title menu
-	if (gamemode==0) then
-		--setting widths for printing
-		i_w1=cen_t_h("fffffrost medal",
-		127)
-		i_w2=cen_t_h("start",127)
-		--start offset
-		i_w4=i_w2-#"start"-10
-		
+	if (gamemode==0) then		
 		rect(0,0,127,60,6)
 		print("„frost medal„",
-			i_w1,10,6)
-		print("start",i_w2,30,6)
-		spr(draw_curs(),tcurs.x,
+			34,10,6)
+		print("start",53,30,6)
+		spr(d_spr(tcurs),tcurs.x,
 			tcurs.y)
 	end	
 	---game(map 1)
-	if (gamemode==1) then		
+	if (gamemode==1) then	
 		map(maps["one"])
-		spr(draw_curs(),curs.x,curs.y)
-		--spr(drawchar(char2,cchar2),char2.x,char2.y)
-		spr(drawchar(char,cchar),char.x,char.y)
+		spr(d_spr(curs),curs.x,curs.y)
+		spr(d_spr(char),char.x,char.y)
 		draw_border()
 		if (turnmode==2) then
 			--action menu
-			draw_menu()
+			draw_menu(#act_menu,act_menu)
 		end
 	end
 end
@@ -155,7 +148,7 @@ function _update()
 	end
 	--title screen start
 	--[[
-	note:if gamemode==1 comes 1st
+	note: gamemode==1 comes 1st
 	because of a bug where the
 	action menu starts opened when
 	gamemode is set to 1 and the
@@ -182,37 +175,13 @@ function cen_t_h(text,
 	return flr((w_w-#text*4)/2)
 end
 
-function draw_curs()
-	--anim section
-	--title cursor
-	if gamemode==0 then
-		if frames<15 then
-			ccurs=tcurs.sp
-		end
-		if frames>=15 then
-			ccurs=tcurs.sp+1
-		end
-	end
-	--game cursor
-	if gamemode==1 then
-		if frames<15 then
-			ccurs=curs.sp
-		end
-		if frames>=15 then
-			ccurs=curs.sp+1
-		end
-	end
-	return ccurs
-end
-
-function drawchar(sprite,temp)
+function d_spr(sprite)
 	if frames<15 then
-		cchar=sprite.sp
+		return sprite.sp
 	end
 	if frames>=15 then
-		cchar=sprite.sp+1
+		return sprite.sp+1
 	end
-	return temp
 end
 
 --[[
@@ -220,9 +189,8 @@ will be used to draw all menus.
 for now only includes action
 menu. 
 --]]
-function draw_menu()
-	--units/status/end
-	local n_item=3
+function draw_menu(n_item,
+	m_items)
 	--[[
 	menu window
 	n_item-1*2 sums 2-pixel spaces
@@ -235,9 +203,19 @@ function draw_menu()
 		(char_h*n_item+
 			((n_item-1)*2+3)),6)
  --menu items
-	print("units",99,2)
-	print("status",99,9)
-	print("end",99,16)
+ --spaced by 7 chars on y-axis
+ --[[
+ least symbol heavy way to use
+ a two-var for loop in lua?
+ --]]
+ local j=2
+ for i=1,n_item do
+ 	print(m_items[i][1],99,j)
+ 	j+=7
+ end
+	--print("units",99,2)
+	--print("status",99,9)
+	--print("end",99,16)
 	--menu cursor
 	rect(actcurs.x,
 		actcurs.y+m_item*7,
@@ -246,7 +224,6 @@ function draw_menu()
 end
 
 --moves cursor
---optionally returns cursor pos
 function move_cursor()
 	--ones place of cur_tile
 	local ones=flr(cur_tile%10)
@@ -279,9 +256,7 @@ function move_cursor()
 end
 
 function move_unit(unit)
- turnmode=3
 	local strt=cur_tile
-	move_cursor()
 	local fin=cur_tile
 	local strt=get_coord(strt)
 	local finc=get_coord(fin)
@@ -317,11 +292,9 @@ function get_coord(tile)
 	local y=(tile/10)*8
 	local coord={x,y}
 	return coord
-
 end
 
 function action_menu()
-	turnmode=2
 	if btnp(5) then
 		turnmode=0
 		m_item=0--memory cursor opt?
@@ -338,37 +311,56 @@ function action_menu()
 	end
 	if btnp(2) then
 		if m_item==0 then
-			m_item=2
+			m_item=#act_menu-1
 		else m_item-=1
 		end
 	end
 	if btnp(3) then
-		if m_item==2 then
+		if m_item==#act_menu-1 then
 			m_item=0
 		else m_item+=1
 		end
 	end
 end
 
-function turn()
-	local units = {}
-	for k,v in pairs(player) do
-		if k==t then units.add(v)
+function char_on_tile(tile)
+	for i in all(player) do
+		for k,v in pairs(i) do
+			if k=="t" and v==tile then
+			 return k
+			end
 		end
 	end
-				
+	return nil
+end
+
+function turn()			
 	if turnmode==0 then
-		move_cursor()
+		move_cursor()		
 		if btnp(4) then
-			--action_menu()
-			move_unit(char)
+			t=char_on_tile(cur_tile)
+			if t~=nil then
+				turnmode=3
+			else turnmode=2
+			end
 		end
 	end
 	if turnmode==2 then
 		action_menu()
 	end
 	if turnmode==3 then
-		move_char()
+		move_cursor()
+		if btnp(4) then
+			turnmode=4
+			move_char=char
+		end
+		if btnp(5) then
+			turnmode=0
+		end
+	end
+	if turnmode==4 then
+		move_unit(move_char)
+	end
 end
 
 
@@ -381,14 +373,14 @@ __gfx__
 5000000505000050b33bbbbbbbbbbb3b5656453555566555554065655b4b656bb656bbb555555555555555555544445555544555000000000000000000000000
 5000000505500550bbbbb33bbbbbb333b5554533556666555540555bb66b656bb656b66bbbbb555bb555bbbbbbbbbbbbb66bb66b000000000000000000000000
 5550055500000000bb3bbbbb3b3bbb4bb656b333b666666bbbbb656b6666656666566666bbbb555bb555bbbbbbbbbbbb66666666000000000000000000000000
-00111100001111000068800000088000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00111100881111000069980000888800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-811c1c10811c1c100067880000899880000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-811fff00111fff0000fff800000f8800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-011888001088880000f55f0006ffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-01f66f0000f66f0000055f0000655f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00f660f000f660f00004400006664000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00044000000440000000000006600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111100001111008011110000111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111100881111008811110000111100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+811c1c10811c1c100881cf101111cf10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+811fff00111fff00118fff00111fff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01188800108888001118880000888800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01f66f0000f66f0000f66ff088f66f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00f660f000f660f0000f6000000f60f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00044000000440000040440000404400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 05500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 50500000055000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 85666666505000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -669,7 +661,7 @@ __map__
 0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 __sfx__
 000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-0010000010050180501a0501c0501d050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+000a00000c0500c0000c0500d0000c0500c0500c0500c050000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
