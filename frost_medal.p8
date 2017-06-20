@@ -2,163 +2,170 @@ pico-8 cartridge // http://www.pico-8.com
 version 8
 __lua__
 --[[
-author:bootles
-date: 5/15/2017
-notes:
-	-separate "sprite" data and
-		character instance data?
-	-draw cursor as black with
-		different transparent color?
-	-game window will have fixed
-		size/border(done)
-	-camera will pan to show more 
-	 as needed (or just limit maps
-	 to small sizes?)
-	-compute all constants and
-		hard-code them to reduce
-		symbols(title done)
-	-write a general function
-		to draw a dynamically sized
-		menu (logic exists but menu
-		items and count need to be
-		passed/deterrmined at runtime)
-	-make animated sprite function
-		call (can all sprites be on
-		same timer?)
-	-finish function to draw screen
-	 border (done?)
+  author:bootles
+  date: 5/15/2017
+  sorry about the density of comments and notes!
+  notes:
+  -how should i manage remembering the last unit used in an operating?
+  i need to consider which game states require a unit as it's all based
+  on global state. i guess all states that require a "remembered" unit
+  will have to handle a global variable and be responsible for resetting it
+  when implemented just reset to nil and nil check every op after that
+  -new thought for menus: all menu text should be in one table, all menus
+  after another. another table will be written that indexes each menu's
+  starting point in the first menu plus it's "length"
+	-change entire map layout? currently it's fixed at 10 squares per row,
+  indexed at 1. could be designed with a scrolling camera or smaller levels
+	-separate "sprite" data and character instance data? or combine?
+	-compute all constants and hard-code them to reduce symbols(title done)
+	-write a general function to draw a dynamically sized menu (done but the
+  structure may change)
+	-make animated sprite function call (can all sprites be on same timer?)
+  currently only two frames long so i should extend if possible
 --]]
 
---title=0,game=1
+--buttons
+left=0
+right=1
+up=2
+down=3
+confirm=4
+cancel=5
+
+--gamemode,title=0,game=1
 gamemode=0
 
 --[[ turn phases
-0=cursor
-1=move character
-2=action menu
-3=moving character
-4=animating move
+  0=cursor
+  1=action menu
+  2=moving character
+  3=animating move
+  3.5=moving back(may be changed)
+  4=unit menu
+  4.1=stats menu
 --]]
-turnmode=0
+turnmode = 0
 
 --menu cursor item
 --should be reset after use!
-m_item=0
+m_item = 0
 
---character in movement
---temp variable!
-movechar=nil
+--[[
+  temp vars for movement movechar saves the char in movement in case the user
+  wants to cancel. yhalf is used to circumvent moving one full tile per frame on
+  the y-axis,the slower animation looks better.
+--]]
+movechar = nil
+yhalf = 0
 
 --"tile" state
 --[[
-current tile cursor is on,where
-a tile is 8x8 pixels. used
-mostly to avoid moving cursor
-beyond board bounds.
-new tile is used for moving
-characters from tile to tile.
-reset after used!
+  current tile cursor is on,where a tile is 8x8 pixels. used mostly to avoid
+  moving cursor beyond board bounds. prev tile is used for moving characters
+  from tile to tile. reset after used!
 --]]
-cur_tile=0
-new_tile=-1
+cur_tile = 1
+prev_tile = nil
 
 --size of char in pixels
 --rough estimate but it works
-char_w=4
-char_h=5
-
---[[
-"registers" to store menu item
-widths in without making too
-many symbols. may not use them
-as i don't have dynamic menus
-yet.
---]]
-i_w1=0 i_w2=0 i_w3=0
-i_w4=0 i_w5=0 i_w6=0
-i_w7=0 i_w8=0 i_w9=0
-
---starting frame for anim.
---unify for all sprites?
-ccurs=0 --in-game and title
-cchar=16 --test for sprite1
+char_w = 4
+char_h = 5
 
 --frame counter
 --[[
-all animated sprites are done
-in two frames. sprite1 if f<15
-sprite2 if f>=15
+  all animated sprites are done in two frames using this counter. sp1 if
+  f<15, sp2 if f>=15
 --]]
-frames=0
+frames = 0
 
 --menu item table
-act_menu={
-	{"units",ucall},
-	{"status",scall},
-	{"help",hcall},
-	{"end",ecall}
+act_menu = {
+	"units",
+	"status",
+	"help",
+	"end"
+}
+unit_menu = {
+  "stats",
+	"item",
+	"wait"
+}
+stat_menu = {
+  "name","class","hp","mhp","str","mag",
+  "skl","spd","luk","def","res","mov"
 }
 
+
 --sprite table
-char={x=8,y=8,sp=16,mv=18,t=0}
-curs={x=8,y=8,sp=0}
-tcurs={x=38,y=30,sp=32}--title
-actcurs={x=97,y=1,x2=126,y2=7}
+s_char = {x=8,y=8,sp=16,mv=18,t=1}
+u_char={"revell","mercenary",20,20,7,1,10,7,5,3,1,5}
+curs = {x=8,y=8,sp=0}
+tcurs = {x=38,y=30,sp=32}--title
+mcurs = {x=97,y=1}--menu
 
 --characters fielded
-player={char}
-enemy={}
-allunits={player,enemy}
+player = {s_char}
+enemy = {}
+allunits = {player,enemy}
+
+--unit in use (used for moving)
+global_unit = nil
 
 --map table
-maps={one={0,0,0,0,10,10}}
+maps = {one={0,0,0,0,10,10}}
 
-
+--debug toggle
+debug = true
 function _draw()
 	cls()
+  --debug info printed
+  if debug then
+    print("tile:"..cur_tile,96,50,8)
+    print("turn:"..turnmode,96,60,8)
+    print("menu:"..m_item,96,70,8)
+  end
 	---title menu
-	if (gamemode==0) then		
+	if (gamemode == 0) then
 		rect(0,0,127,60,6)
-		print("„frost medal„",
-			34,10,6)
+		print("„frost medal„", 34,10,6)
 		print("start",53,30,6)
-		spr(d_spr(tcurs),tcurs.x,
-			tcurs.y)
-	end	
+		spr(draw_spr(tcurs),tcurs.x, tcurs.y)
+	end
 	---game(map 1)
-	if (gamemode==1) then	
+	if (gamemode == 1) then
 		map(maps["one"])
-		spr(d_spr(curs),curs.x,curs.y)
-		spr(d_spr(char),char.x,char.y)
+		spr(draw_spr(curs),curs.x,curs.y)
+		spr(draw_spr(s_char),s_char.x,s_char.y)
 		draw_border()
-		if (turnmode==2) then
+		if (turnmode == 1) then
 			--action menu
-			draw_menu(#act_menu,act_menu)
+			draw_menu(act_menu,true)
 		end
+    if (turnmode == 4) then
+      draw_menu(unit_menu,true)
+    end
+    if turnmode == 4.1 then
+      --draw_stats_menu(global_unit)--note:sprite/unit data are separate atm
+      draw_stats_menu(u_char)--debug only
+    end
 	end
 end
 
 function _update()
-	if frames==30 then
-		frames=0
-	else frames+=1
+	if frames == 30 then
+		frames = 0
+	else frames += 1
 	end
-	if gamemode==1 then
+	if gamemode == 0 then
+		if btnp(4) then
+			gamemode = 1
+		end
+    return
+	end
+	if gamemode == 1 then
 		turn()--func to call all funcs
 	end
-	--title screen start
-	--[[
-	note: gamemode==1 comes 1st
-	because of a bug where the
-	action menu starts opened when
-	gamemode is set to 1 and the
-	game begins
-	--]]
-	if gamemode==0 then
-		if btnp(4) then
-			gamemode=1
-		end
-	end	
 end
 
 function draw_border()
@@ -168,199 +175,275 @@ function draw_border()
 	end
 end
 
---centers text horizontally
-function cen_t_h(text,
-	w_w)--[[text_width
-											and window_width]]
-	return flr((w_w-#text*4)/2)
-end
-
-function d_spr(sprite)
-	if frames<15 then
+function draw_spr(sprite)
+	if frames < 15 then
 		return sprite.sp
 	end
-	if frames>=15 then
+	if frames >= 15 then
 		return sprite.sp+1
 	end
 end
 
 --[[
-will be used to draw all menus.
-for now only includes action
-menu. 
+  will be used to draw all menus.
+  for now only includes action
+  menu.
 --]]
-function draw_menu(n_item,
-	m_items)
+function draw_menu(items,cursor)
 	--[[
-	menu window
-	n_item-1*2 sums 2-pixel spaces
-	in between menu entries.
-	+3 at the end pads space above
-	the first entry and below the
-	last.
+    menu window this function's magic numbers can be very hard to follow so
+    i'm adding tons of comments
 	--]]
-	rect(96,0,127,
-		(char_h*n_item+
-			((n_item-1)*2+3)),6)
- --menu items
- --spaced by 7 chars on y-axis
- --[[
- least symbol heavy way to use
- a two-var for loop in lua?
- --]]
- local j=2
- for i=1,n_item do
- 	print(m_items[i][1],99,j)
- 	j+=7
- end
-	--print("units",99,2)
-	--print("status",99,9)
-	--print("end",99,16)
+  local len = #items
+  --print(len,0,0,8) --old
+  --[[
+    m_y is is the second y coord. to draw the menu rectangle.
+    character height for each menu item plus a 2 pixel buffer, one
+    pixel above and below each item.
+  --]]
+  local m_y = char_h*len + ((len-1) * 2+3)
+
+  --the added 31 is an arbitrary menu width
+  rect(curs.x,curs.y,curs.x+31,m_y+curs.y,6)
+  rectfill(curs.x+1,curs.y+1,curs.x+30,m_y+curs.y-1,0)
+  --menu items
+  --spaced by 7 chars on y-axis
+  --[[
+    least symbol heavy way to use a two-var for loop in lua?
+  --]]
+  local j = curs.y + 2
+  for i=1,len do
+    print(items[i],curs.x+3,j,6)
+    j += 7
+  end
 	--menu cursor
-	rect(actcurs.x,
-		actcurs.y+m_item*7,
-		actcurs.x2,
-		actcurs.y2+m_item*7,9)
+  if cursor then
+    mcurs.x = curs.x + 1
+    mcurs.y = curs.y + 1 + m_item*7
+    rect(mcurs.x,mcurs.y,mcurs.x+29,mcurs.y+6,9)
+  end
 end
 
 --moves cursor
 function move_cursor()
 	--ones place of cur_tile
-	local ones=flr(cur_tile%10)
-	--left
-	if btnp(0) then
-		if flr(cur_tile%10)~=0 then
-			curs.x-=8
-			cur_tile-=1
+	local ones = flr(cur_tile % 10)
+
+	if btnp(left) then
+		if flr(cur_tile % 10) ~= 1 then
+			curs.x -= 8
+			cur_tile -= 1
 		end
 	end
-	--right
-	if btnp(1) then
-		if flr(cur_tile%10)~=9 then
-			curs.x+=8 
-			cur_tile+=1
+
+	if btnp(right) then
+		if flr(cur_tile % 10) ~= 0 then
+			curs.x += 8
+			cur_tile += 1
 		end
 	end
-	--up
-	if btnp(2) and
-		cur_tile>=10 then
-		curs.y-=8
-		cur_tile-=10
+
+	if btnp(up) and
+  cur_tile >= 11 then
+		curs.y -= 8
+		cur_tile -= 10
 	end
-	--down
-	if btnp(3) and
-		cur_tile<120 then
-		curs.y+=8
-		cur_tile+=10
+
+	if btnp(down) and
+  cur_tile < 121 then
+		curs.y += 8
+		cur_tile += 10
 	end
 end
 
-function move_unit(unit)
-	local strt=cur_tile
-	local fin=cur_tile
-	local strt=get_coord(strt)
-	local finc=get_coord(fin)
-	xdis=finc[1]-char.x
-	ydis=finc[2]-char.y
-	print("made it!")
-	print(finc[1],40,40,1)
-	print(finc[2],50,50,1)
-	if ydis>xdis then
-		if ydis>0 then
-			char.y+=1
-			ydis-=1
-		elseif ydis<0 then
-			char.y-=1
-			ydis+=1
+--move given unit to tile
+--return false if not complete
+--return true if unit is on
+--tile
+function move_unit(unit,tile)
+	xdis = tile % 10 - unit.t % 10
+	ydis = tile/10-unit.t/10
+	if xdis ~= 0 or ydis ~= 0 then
+		if abs(xdis) > abs(ydis) then
+			if xdis > 0 then
+				unit.t += 0.5
+				unit.x += 4
+			else
+				unit.t -= 0.5
+				unit.x -= 4
+        return false
+			end
 		end
-	elseif xdis>ydis then
-		if xdis>0 then
-			char.x+=1
-			ydis-=1
-		elseif xdis<0 then
-			char.x-=1
-			xpos+=1
+		if abs(ydis) > abs(xdis) then
+			if ydis > 0 then
+				yhalf += 1
+				unit.y += 4
+			else
+				yhalf -= 1
+				unit.y -= 4
+			end
+			if yhalf == 2 then
+				unit.t += 10
+				yhalf = 0
+			end
+			if yhalf == -2 then
+				unit.t -= 10
+				yhalf = 0
+			end
+			return false
 		end
+	end
+	if xdis == 0 and ydis == 0 then
+		--set to unit menu when implemented
+		return true
 	end
 end
 
---how to return sequence????
-
---get pixel coords at "tile"
-function get_coord(tile)
-	local x=(tile%10)*8
-	local y=(tile/10)*8
-	local coord={x,y}
-	return coord
-end
-
-function action_menu()
-	if btnp(5) then
-		turnmode=0
-		m_item=0--memory cursor opt?
+--generalize this function for all menus?
+function menu(menu)
+	if btnp(cancel) then
+		turnmode = 0
+		m_item = 0--memory cursor opt?
 		return
 	end
-	if btnp(4) then
-		if m_item==0 then
-			--units
-		elseif m_item==1 then
+	if btnp(confirm) then
+		if m_item == 0 then
+      if menu == unit_menu then
+        turnmode = 4.1
+      end
+    end
+		elseif m_item == 1 then
 			--status menu
-		elseif m_item==2 then
+      --turnmode = 4.2
+		elseif m_item == 2 then
 			--end turn
+      --turnmode = 4.3
+  end
+	if btnp(up) then
+		if m_item == 0 then
+			m_item = #menu - 1
+		else m_item -= 1
 		end
 	end
-	if btnp(2) then
-		if m_item==0 then
-			m_item=#act_menu-1
-		else m_item-=1
+	if btnp(down) then
+		if m_item == #menu - 1 then
+			m_item = 0
+		else m_item += 1
 		end
 	end
-	if btnp(3) then
-		if m_item==#act_menu-1 then
-			m_item=0
-		else m_item+=1
-		end
-	end
+end
+
+function draw_stats_menu(unit)
+  local len = #stat_menu
+  local m_y = char_h*len + ((len-1) * 2+3)
+
+  rect(curs.x,curs.y,curs.x+41,m_y+curs.y,6)
+  rectfill(curs.x+1,curs.y+1,curs.x+40,m_y+curs.y-1,0)
+
+  local y_print_offset = curs.y + 2
+  for i=1,#stat_menu do
+    if i == 1 then --name
+      print(unit[i],curs.x+3,y_print_offset,6)
+    end
+    if i == 2 then --class
+      print(unit[i],curs.x+3,y_print_offset,6)
+    end
+    if i == 3 then --hp
+      print(unit[i].."/"..unit[i+1],curs.x+3,y_print_offset,6)
+    end
+    if i > 4 then
+      print(stat_menu[i].." : "..unit[i],curs.x+3,y_print_offset,6)
+    end
+    y_print_offset += 7
+  end
 end
 
 function char_on_tile(tile)
-	for i in all(player) do
-		for k,v in pairs(i) do
-			if k=="t" and v==tile then
-			 return k
-			end
-		end
-	end
+	--for i in all(player) do
+	--	for k,v in pairs(i) do
+	--		if k == "t" and v == tile then
+  --      return k
+	--		end
+	--	end
+	--end
+  for i in all(player) do
+    if i.t == tile then
+      return i
+    end
+  end
 	return nil
 end
 
-function turn()			
-	if turnmode==0 then
-		move_cursor()		
-		if btnp(4) then
-			t=char_on_tile(cur_tile)
-			if t~=nil then
-				turnmode=3
-			else turnmode=2
+function turn()	
+  if turnmode == 4.1 then
+    if btnp(cancel) then
+      turnmode = 4
+    end
+    return
+  end
+	if turnmode == 4 then
+    menu(unit_menu)
+		if btnp(cancel) then
+			turnmode = 3.5
+		end
+    return
+	end
+
+	if turnmode == 3 then
+		--move_unit(s_char,cur_tile)
+		--if cur_tile == s_char.t then
+		--	turnmode = 4
+		--end
+		move_unit(global_unit,cur_tile)--check for nil?
+		if cur_tile == global_unit.t then
+			turnmode = 4
+		end
+    return
+	end
+
+	if turnmode == 3.5 then
+		--move_unit(s_char,prev_tile)
+		--if prev_tile == s_char.t then
+		--	turnmode = 0
+		--end
+		move_unit(global_unit,prev_tile)--check for nil?
+		if prev_tile == global_unit.t then
+			turnmode = 0
+      global_unit = nil
+		end
+    return
+	end
+
+	if turnmode == 2 then
+		move_cursor()
+		if btnp(confirm) then
+			--prev_tile = s_char.t
+      prev_tile = global_unit.t
+			turnmode = 3
+		end
+		if btnp(cancel) then
+			turnmode = 0
+		end
+    return
+	end
+
+	if turnmode == 1 then
+		menu(act_menu)
+    return
+	end
+
+	if turnmode == 0 then
+		move_cursor()
+		if btnp(confirm) then
+			t = char_on_tile(cur_tile)
+			if t ~= nil then
+				turnmode = 2
+        global_unit=t
+			else turnmode = 1
 			end
 		end
 	end
-	if turnmode==2 then
-		action_menu()
-	end
-	if turnmode==3 then
-		move_cursor()
-		if btnp(4) then
-			turnmode=4
-			move_char=char
-		end
-		if btnp(5) then
-			turnmode=0
-		end
-	end
-	if turnmode==4 then
-		move_unit(move_char)
-	end
+  return
 end
 
 
