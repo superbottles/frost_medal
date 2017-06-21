@@ -1,16 +1,23 @@
 pico-8 cartridge // http://www.pico-8.com
 version 8
 __lua__
+--frost medal
+--an inspired fantasy rpg
 --[[
   author:bootles
   date: 5/15/2017
   sorry about the density of comments and notes!
   notes:
+  -restructure the draw_spr function to accept a sprite structure only.
+  currently structure members are passed alongside and it makes no sense
+  -the way unit movement is implemented is cool and all, but it should
+  obey the tile boundaries and move full tiles before shifting direction
   -how should i manage remembering the last unit used in an operating?
   i need to consider which game states require a unit as it's all based
   on global state. i guess all states that require a "remembered" unit
   will have to handle a global variable and be responsible for resetting it
   when implemented just reset to nil and nil check every op after that
+  (co-routines are probably the best solution)
   -new thought for menus: all menu text should be in one table, all menus
   after another. another table will be written that indexes each menu's
   starting point in the first menu plus it's "length"
@@ -24,6 +31,7 @@ __lua__
   currently only two frames long so i should extend if possible
 --]]
 
+----constants
 --buttons
 left=0
 right=1
@@ -32,6 +40,29 @@ down=3
 confirm=4
 cancel=5
 
+--size of char in pixels
+--rough estimate but it works
+char_w = 4
+char_h = 5
+
+--menu item table
+act_menu = {
+	"units",
+	"status",
+	"help",
+	"end"
+}
+unit_menu = {
+  "stats",
+	"item",
+	"wait"
+}
+stat_menu = {
+  "name","class","hp","mhp","str","mag",
+  "skl","spd","luk","def","res","mov"
+}
+
+----globals
 --gamemode,title=0,game=1
 gamemode=0
 
@@ -53,7 +84,7 @@ m_item = 0
 --[[
   temp vars for movement movechar saves the char in movement in case the user
   wants to cancel. yhalf is used to circumvent moving one full tile per frame on
-  the y-axis,the slower animation looks better.
+  the y-axis,the slower animation looks better.note:coroutines?
 --]]
 movechar = nil
 yhalf = 0
@@ -67,10 +98,8 @@ yhalf = 0
 cur_tile = 1
 prev_tile = nil
 
---size of char in pixels
---rough estimate but it works
-char_w = 4
-char_h = 5
+--unit in use (used for moving)
+global_unit = nil
 
 --frame counter
 --[[
@@ -78,24 +107,6 @@ char_h = 5
   f<15, sp2 if f>=15
 --]]
 frames = 0
-
---menu item table
-act_menu = {
-	"units",
-	"status",
-	"help",
-	"end"
-}
-unit_menu = {
-  "stats",
-	"item",
-	"wait"
-}
-stat_menu = {
-  "name","class","hp","mhp","str","mag",
-  "skl","spd","luk","def","res","mov"
-}
-
 
 --sprite table
 s_char = {x=8,y=8,sp=16,mv=18,t=1}
@@ -109,9 +120,6 @@ player = {s_char}
 enemy = {}
 allunits = {player,enemy}
 
---unit in use (used for moving)
-global_unit = nil
-
 --map table
 maps = {one={0,0,0,0,10,10}}
 
@@ -119,12 +127,6 @@ maps = {one={0,0,0,0,10,10}}
 debug = true
 function _draw()
 	cls()
-  --debug info printed
-  if debug then
-    print("tile:"..cur_tile,96,50,8)
-    print("turn:"..turnmode,96,60,8)
-    print("menu:"..m_item,96,70,8)
-  end
 	---title menu
 	if (gamemode == 0) then
 		rect(0,0,127,60,6)
@@ -134,6 +136,13 @@ function _draw()
 	end
 	---game(map 1)
 	if (gamemode == 1) then
+    --debug info printed
+    if debug then
+      print("tile:"..cur_tile,96,50,8)
+      print("turn:"..turnmode,96,60,8)
+      print("menu:"..m_item,96,70,8)
+      print(""..stat(1),96,80,8)
+    end
 		map(maps["one"])
 		spr(draw_spr(curs),curs.x,curs.y)
 		spr(draw_spr(s_char),s_char.x,s_char.y)
@@ -185,42 +194,70 @@ function draw_spr(sprite)
 end
 
 --[[
-  will be used to draw all menus.
-  for now only includes action
-  menu.
+  will be used to draw all menus? currenly only draws interactive menus that
+  don't draw in unit/map data. stats menu drawing is separate but may
+  be combined later
 --]]
 function draw_menu(items,cursor)
-	--[[
-    menu window this function's magic numbers can be very hard to follow so
-    i'm adding tons of comments
-	--]]
   local len = #items
   --print(len,0,0,8) --old
   --[[
-    m_y is is the second y coord. to draw the menu rectangle.
-    character height for each menu item plus a 2 pixel buffer, one
-    pixel above and below each item.
+    i honestly forget exactly how i came to this formula. it creates
+    the second y coordinate to use to draw the menu. each menu element
+    has a 1 pixel wide buffer above and below so a cursor can be drawn
+    to highlight it like a box.
   --]]
   local m_y = char_h*len + ((len-1) * 2+3)
 
   --the added 31 is an arbitrary menu width
   rect(curs.x,curs.y,curs.x+31,m_y+curs.y,6)
   rectfill(curs.x+1,curs.y+1,curs.x+30,m_y+curs.y-1,0)
+
   --menu items
   --spaced by 7 chars on y-axis
-  --[[
-    least symbol heavy way to use a two-var for loop in lua?
-  --]]
+  --(character height + 2 pixel buffer mentioned above)
   local j = curs.y + 2
   for i=1,len do
     print(items[i],curs.x+3,j,6)
     j += 7
   end
+
 	--menu cursor
   if cursor then
     mcurs.x = curs.x + 1
     mcurs.y = curs.y + 1 + m_item*7
     rect(mcurs.x,mcurs.y,mcurs.x+29,mcurs.y+6,9)
+  end
+end
+
+--[[
+  a non-interactive, customized version of draw_menu specifically
+  made for the stats menu. this function may stay separate from
+  draw_menu, but written to handle all non-interactive menus as they
+  come
+]]
+function draw_stats_menu(unit)
+  local len = #stat_menu
+  local m_y = char_h*len + ((len-1) * 2+3)
+
+  rect(curs.x,curs.y,curs.x+41,m_y+curs.y,6)
+  rectfill(curs.x+1,curs.y+1,curs.x+40,m_y+curs.y-1,0)
+
+  local y_print_offset = curs.y + 2
+  for i=1,#stat_menu do
+    if i == 1 then --name
+      print(unit[i],curs.x+3,y_print_offset,6)
+    end
+    if i == 2 then --class
+      print(unit[i],curs.x+3,y_print_offset,6)
+    end
+    if i == 3 then --hp
+      print(unit[i].."/"..unit[i+1],curs.x+3,y_print_offset,6)
+    end
+    if i > 4 then
+      print(stat_menu[i].." : "..unit[i],curs.x+3,y_print_offset,6)
+    end
+    y_print_offset += 7
   end
 end
 
@@ -256,10 +293,14 @@ function move_cursor()
 	end
 end
 
---move given unit to tile
---return false if not complete
---return true if unit is on
---tile
+--[[
+  move given unit to tile
+  return false if not complete
+  return true if unit is on tile
+  currently this does not account for untraversable terrain, which
+  will be added at some point (i hope)
+  note: co-routines can probably simplify game-state shenanigans
+]]
 function move_unit(unit,tile)
 	xdis = tile % 10 - unit.t % 10
 	ydis = tile/10-unit.t/10
@@ -274,6 +315,10 @@ function move_unit(unit,tile)
         return false
 			end
 		end
+    --[[
+      yhalf is a variable used to move partial y-axis tiles for animation
+      purposes.
+    ]]
 		if abs(ydis) > abs(xdis) then
 			if ydis > 0 then
 				yhalf += 1
@@ -333,30 +378,6 @@ function menu(menu)
 	end
 end
 
-function draw_stats_menu(unit)
-  local len = #stat_menu
-  local m_y = char_h*len + ((len-1) * 2+3)
-
-  rect(curs.x,curs.y,curs.x+41,m_y+curs.y,6)
-  rectfill(curs.x+1,curs.y+1,curs.x+40,m_y+curs.y-1,0)
-
-  local y_print_offset = curs.y + 2
-  for i=1,#stat_menu do
-    if i == 1 then --name
-      print(unit[i],curs.x+3,y_print_offset,6)
-    end
-    if i == 2 then --class
-      print(unit[i],curs.x+3,y_print_offset,6)
-    end
-    if i == 3 then --hp
-      print(unit[i].."/"..unit[i+1],curs.x+3,y_print_offset,6)
-    end
-    if i > 4 then
-      print(stat_menu[i].." : "..unit[i],curs.x+3,y_print_offset,6)
-    end
-    y_print_offset += 7
-  end
-end
 
 function char_on_tile(tile)
 	--for i in all(player) do
